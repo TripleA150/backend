@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { TResponseRulesResponseType } from '@libs/contracts/constants';
 import {
     ResponseRuleConditionSchema,
+    ResponseRuleHostOverridesSchema,
     ResponseRuleSchema,
     ResponseRulesConfigSchema,
     ResponseRuleEncryptionSchema,
@@ -14,6 +15,7 @@ export type TResponseRule = z.infer<typeof ResponseRuleSchema>;
 export type TResponseRuleCondition = z.infer<typeof ResponseRuleConditionSchema>;
 export type TResponseRuleModifications = z.infer<typeof ResponseRuleModificationsSchema>;
 export type TResponseRuleEncryption = z.infer<typeof ResponseRuleEncryptionSchema>;
+export type TResponseRuleHostOverrides = z.infer<typeof ResponseRuleHostOverridesSchema>;
 
 export interface ISrrMatchedResult {
     matched: boolean;

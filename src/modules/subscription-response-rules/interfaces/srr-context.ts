@@ -3,7 +3,7 @@ import { TResponseRulesResponseType } from '@libs/contracts/constants';
 
 import { SubscriptionSettingsEntity } from '@modules/subscription-settings/entities';
 
-import { TResponseRuleEncryption } from '../types/response-rules.types';
+import { TResponseRuleEncryption, TResponseRuleHostOverrides } from '../types/response-rules.types';
 
 export interface ISRRContext {
     userAgent: string;
@@ -20,4 +20,5 @@ export interface ISRRContext {
     disableHwidCheck?: boolean;
     encryption?: TResponseRuleEncryption;
     excludeHostsByTags?: Set<string>;
+    hostOverrides?: TResponseRuleHostOverrides;
 }

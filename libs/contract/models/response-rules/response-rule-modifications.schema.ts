@@ -1,5 +1,7 @@
 import z from 'zod';
 
+import { ResponseRuleHostOverridesSchema } from './response-rule-host-overrides.schema';
+
 export const ResponseRuleEncryptionSchema = z.object({
     method: z.enum(['age1', 'age1pq1']),
     key: z.string(),
@@ -116,6 +118,32 @@ export const ResponseRuleModificationsSchema = z
                 markdownDescription:
                     'Excludes hosts from the subscription output if at least one tag in the host matches the given tags.',
             }),
+        hostOverrides: ResponseRuleHostOverridesSchema.optional().meta({
+            title: 'Host Overrides',
+            markdownDescription:
+                'Fully replaces the given fields on **every host** of the user in the subscription response. Works exactly like **Host Overrides** in External Squads, but is bound to a matched response rule.\n\n' +
+                '- **serverDescription** — replaces `serverDescription` of all hosts. Max 30 characters.\n' +
+                '- **vlessRouteId** — replaces `vlessRouteId` (Server ID) of all hosts. From `0` to `65535`.\n\n' +
+                'Only the fields present in this object are replaced, the rest are left untouched. Pass `null` to clear the value.\n\n' +
+                '**This modification have higher priority than Host Overrides from External Squads.**',
+            examples: [
+                {
+                    serverDescription: 'Some description',
+                    vlessRouteId: 100,
+                },
+            ],
+            defaultSnippets: [
+                {
+                    label: 'Examples: Override serverDescription and vlessRouteId',
+                    markdownDescription:
+                        'Replace `serverDescription` and `vlessRouteId` for all hosts in the response',
+                    body: {
+                        serverDescription: 'Some description',
+                        vlessRouteId: 100,
+                    },
+                },
+            ],
+        }),
     })
     .optional()
     .meta({

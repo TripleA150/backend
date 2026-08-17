@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
+import { ISRRContext } from '@modules/subscription-response-rules/interfaces';
+
 import { SUBSCRIPTION_CONFIG_TYPES } from './constants/config-types';
 import { ClashGeneratorService } from './generators/clash.generator.service';
 import { MihomoGeneratorService } from './generators/mihomo.generator.service';
@@ -34,7 +36,7 @@ export class RenderTemplatesService {
             subscriptionSettings: srrContext.subscriptionSettings,
             hosts,
             user,
-            hostsOverrides,
+            hostsOverrides: this.mergeHostsOverrides(hostsOverrides, srrContext.hostOverrides),
             fallbackOptions,
             excludeHostsByTags: srrContext.excludeHostsByTags,
         });
@@ -118,5 +120,33 @@ export class RenderTemplatesService {
             hostsOverrides,
             fallbackOptions,
         });
+    }
+
+    /**
+     * Host overrides defined by the matched SRR rule have higher priority than the ones
+     * coming from the user's External Squad. Only fields explicitly set by the rule are
+     * replaced, the rest are kept from the External Squad.
+     */
+    private mergeHostsOverrides(
+        externalSquadOverrides: IGenerateSubscription['hostsOverrides'],
+        srrOverrides: ISRRContext['hostOverrides'],
+    ): IGenerateSubscription['hostsOverrides'] {
+        if (!srrOverrides) {
+            return externalSquadOverrides;
+        }
+
+        const merged: NonNullable<IGenerateSubscription['hostsOverrides']> = {
+            ...externalSquadOverrides,
+        };
+
+        if (srrOverrides.serverDescription !== undefined) {
+            merged.serverDescription = srrOverrides.serverDescription;
+        }
+
+        if (srrOverrides.vlessRouteId !== undefined) {
+            merged.vlessRouteId = srrOverrides.vlessRouteId;
+        }
+
+        return merged;
     }
 }

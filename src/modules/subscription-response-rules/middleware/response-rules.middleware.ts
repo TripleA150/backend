@@ -125,6 +125,10 @@ export class ResponseRulesMiddleware implements NestMiddleware {
                 if (mods.excludeHostsByTags) {
                     ssrContext.excludeHostsByTags = new Set(mods.excludeHostsByTags);
                 }
+
+                if (mods.hostOverrides) {
+                    ssrContext.hostOverrides = mods.hostOverrides;
+                }
             }
 
             switch (ssrContext.matchedResponseType) {
