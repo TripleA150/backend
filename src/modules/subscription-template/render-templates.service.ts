@@ -37,6 +37,12 @@ export class RenderTemplatesService {
             hostsOverrides,
             fallbackOptions,
             excludeHostsByTags: srrContext.excludeHostsByTags,
+            // Same rule as the hidden-hosts flag of GetHostsForUserQuery in SubscriptionService.
+            injectedHosts:
+                srrContext.matchedResponseType === 'XRAY_JSON' ||
+                srrContext.matchedResponseType === 'MIHOMO'
+                    ? 'ALL'
+                    : 'NOT_HIDDEN',
         });
 
         switch (srrContext.matchedResponseType) {
@@ -117,6 +123,7 @@ export class RenderTemplatesService {
             user,
             hostsOverrides,
             fallbackOptions,
+            injectedHosts: 'ALL',
         });
     }
 }

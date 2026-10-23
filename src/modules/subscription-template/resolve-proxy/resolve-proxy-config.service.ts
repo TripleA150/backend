@@ -28,6 +28,7 @@ import { SECURITY_LAYERS, USERS_STATUS } from '@libs/contracts/constants';
 
 import { ExternalSquadEntity } from '@modules/external-squads/entities';
 import { HostWithRawInbound } from '@modules/hosts/entities/host-with-inbound-tag.entity';
+import { InjectedHostsService } from '@modules/injected-hosts/injected-hosts.service';
 import { ISRRContext } from '@modules/subscription-response-rules/interfaces';
 import { SubscriptionSettingsEntity } from '@modules/subscription-settings/entities/subscription-settings.entity';
 import { UserEntity } from '@modules/users/entities';
@@ -58,6 +59,8 @@ export interface IResolveProxyConfigOptions {
         respondWithRemarks?: string[];
     };
     excludeHostsByTags?: ISRRContext['excludeHostsByTags'];
+    // Append hosts from the injected hosts file; 'NOT_HIDDEN' where hidden hosts are not served.
+    injectedHosts?: 'ALL' | 'NOT_HIDDEN';
 }
 
 @Injectable()
@@ -67,7 +70,10 @@ export class ResolveProxyConfigService {
     private readonly domainRegex =
         /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
-    constructor(private readonly configService: TypedConfigService) {
+    constructor(
+        private readonly configService: TypedConfigService,
+        private readonly injectedHostsService: InjectedHostsService,
+    ) {
         this.nanoid = customAlphabet('0123456789abcdefghjkmnopqrstuvwxyz', 10);
         this.subPublicDomain = this.configService.getOrThrow('SUB_PUBLIC_DOMAIN');
     }
@@ -88,11 +94,13 @@ export class ResolveProxyConfigService {
             );
         }
 
+        const injectedHosts = await this.getInjectedHosts(options);
+
         const earlyRemarks = this.resolveEarlyExitRemarks(
             user,
             subscriptionSettings,
             fallbackOptions,
-            options.hosts.length,
+            options.hosts.length + injectedHosts.length,
         );
         if (earlyRemarks !== null) {
             return this.createFallbackHosts(
@@ -141,7 +149,31 @@ export class ResolveProxyConfigService {
             }
         }
 
+        for (const injectedHost of injectedHosts) {
+            resolvedProxyConfigs.push({
+                ...injectedHost,
+                finalRemark: this.deduplicateRemark(injectedHost.finalRemark, knownRemarks),
+            });
+        }
+
         return resolvedProxyConfigs;
+    }
+
+    private async getInjectedHosts(
+        options: IResolveProxyConfigOptions,
+    ): Promise<ResolvedProxyConfig[]> {
+        const { injectedHosts, user, fallbackOptions, excludeHostsByTags } = options;
+
+        // External keys are not limited by nodes, so only active, unblocked users get them.
+        if (!injectedHosts || fallbackOptions || user.status !== USERS_STATUS.ACTIVE) {
+            return [];
+        }
+
+        return (await this.injectedHostsService.getForUser(user.id)).filter(
+            (h) =>
+                (injectedHosts === 'ALL' || !h.metadata.isHidden) &&
+                !h.metadata.tags.some((tag) => excludeHostsByTags?.has(tag)),
+        );
     }
 
     private resolveEarlyExitRemarks(
