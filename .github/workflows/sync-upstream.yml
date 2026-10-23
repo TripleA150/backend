@@ -2,7 +2,7 @@ name: Sync upstream release
 
 # Merges the latest remnawave/backend release tag into `custom`, type-checks the result and
 # builds the image. On a conflict or a failed check nothing is pushed to `custom`; the run fails
-# and leaves a `sync/<tag>` branch for manual resolution (see INJECTED_HOSTS.md).
+# and leaves a `sync/<tag>` branch for manual resolution.
 
 on:
   schedule:
@@ -105,7 +105,7 @@ jobs:
           git push --force origin "$source:refs/heads/sync/$TAG" || true
           {
             echo "### Upstream $TAG needs a manual merge"
-            echo "Nothing was pushed to \`custom\`. Follow \"Resolving a failed sync\" in INJECTED_HOSTS.md."
+            echo "Nothing was pushed to \`custom\`. Merge the tag into \`custom\` manually, resolve conflicts, type-check and push."
             echo "If the push was refused because the release changes workflow files, add the SYNC_TOKEN secret."
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
