@@ -31,7 +31,7 @@ jobs:
         id: meta
         run: |
           version=$(jq -r .version package.json)
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/remnawave-backend"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           echo "tags=$image:latest,$image:$version-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"

@@ -11,7 +11,7 @@ Mount the file into the container at `/var/lib/remnawave/injected-hosts.json`:
 ```yaml
 services:
     remnawave:
-        image: ghcr.io/triplea150/backend:latest
+        image: ghcr.io/triplea150/remnawave-backend:latest
         volumes:
             - ./injected-hosts.json:/var/lib/remnawave/injected-hosts.json:ro
 ```
@@ -116,7 +116,7 @@ outbound tags.
 ## Build and deployment
 
 The `Build custom image` workflow builds the `custom` branch on every push and publishes
-`ghcr.io/<owner>/backend:latest` and `ghcr.io/<owner>/backend:<version>-<commit>`. The image is
+`ghcr.io/<owner>/remnawave-backend:latest` and `ghcr.io/<owner>/remnawave-backend:<version>-<commit>`. The image is
 built from the upstream Dockerfile and contains the upstream frontend.
 
 To update the server:
