@@ -18,6 +18,8 @@ const MAX_BODY_LENGTH = 2 * 1024 * 1024;
 const OptionsSchema = z.object({
     tags: z.array(z.string()).optional(),
     hidden: z.boolean().optional(),
+    // Name template: {remark} is the link's own name, {n} its position in the source.
+    remark: z.string().optional(),
 });
 
 const SourceSchema = OptionsSchema.extend({
@@ -98,9 +100,14 @@ export class InjectedHostsService {
             const next = new Map<string, ResolvedProxyConfig[]>();
 
             for (const [index, source] of parsed.data.entries()) {
-                const entries: { link: string; tags?: string[]; hidden?: boolean }[] = (
-                    source.keys ?? []
-                ).map((key) => (typeof key === 'string' ? { link: key } : key));
+                const entries: {
+                    link: string;
+                    tags?: string[];
+                    hidden?: boolean;
+                    remark?: string;
+                }[] = (source.keys ?? []).map((key) =>
+                    typeof key === 'string' ? { link: key } : key,
+                );
 
                 if (source.url) {
                     const links = await this.fetchLinks(source.url);
@@ -114,6 +121,17 @@ export class InjectedHostsService {
 
                     host.metadata.tags = entry.tags ?? source.tags ?? [];
                     host.metadata.isHidden = entry.hidden ?? source.hidden ?? false;
+
+                    const remark = entry.remark ?? source.remark;
+                    if (remark) {
+                        const original = host.finalRemark;
+                        const n = String(hosts.length + 1);
+                        host.finalRemark = host.metadata.remark = remark.replace(
+                            /\{(remark|n)\}/g,
+                            (_: string, key: string) => (key === 'n' ? n : original),
+                        );
+                    }
+
                     hosts.push(host);
                 }
 

@@ -42,9 +42,33 @@ Each entry is a source:
 | -------- | ----------------------------------------------------------------------------------------------- |
 | `squads` | Internal squads (name or UUID) whose members receive the keys. Required.                        |
 | `url`    | Subscription URL with share links, one per line or base64-encoded.                              |
-| `keys`   | Share links. Each item is a string or `{ "link", "tags", "hidden" }` to override the source.    |
+| `keys`   | Share links. Each item is a string or `{ "link", "tags", "hidden", "remark" }` to override the source. |
 | `tags`   | Host tags given to every key of the source. Used by `tagRegex` selectors and response rules.    |
 | `hidden` | `true` makes the keys hidden hosts: they are only used through `injectHosts`. Default `false`. |
+| `remark` | Name template for the keys, see [Renaming servers](#renaming-servers). Default: the link's own name. |
+
+### Renaming servers
+
+`remark` replaces the names of all keys of a source. Two placeholders are available:
+
+| Placeholder | Value                                                               |
+| ----------- | ------------------------------------------------------------------- |
+| `{remark}`  | The name from the link (the part after `#`)                         |
+| `{n}`       | The key's position in the source, starting at 1 (skipped links are not counted) |
+
+```json
+{
+    "squads": ["Whitelist"],
+    "url": "https://raw.githubusercontent.com/zieng2/wl/refs/heads/main/vless_universal.txt",
+    "remark": "🇷🇺 Whitelist #{n}"
+}
+```
+
+turns `🇷🇺 VK — #1`, `🇷🇺 VK — #2`, … into `🇷🇺 Whitelist #1`, `🇷🇺 Whitelist #2`, …
+`"[WL] {remark}"` adds a prefix and keeps the original names. A key object can set its own
+`remark`, which overrides the source's. Without `{n}` all keys get the same name and the panel
+appends ` ^~2~^`, ` ^~3~^`, … to tell them apart. `remarkRegex` selectors in `injectHosts` match
+the new names.
 
 Supported links: `vless`, `trojan`, `ss` (without plugins), `hysteria2`/`hy2`, with the `tcp`/`raw`,
 `ws`, `httpupgrade`, `grpc`, `xhttp` and `kcp` transports and `tls`/`reality`/`none` security.
