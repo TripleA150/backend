@@ -129,11 +129,142 @@ To return to the upstream image, set `image: remnawave/backend:3` again.
 
 ## Syncing with upstream
 
-`main` mirrors `remnawave/backend`. To update, sync `main` on GitHub and merge it into `custom`;
-the push triggers a new build. The feature lives in `src/modules/injected-hosts/`; the only
-changes to upstream files are small hooks in:
+The `Sync upstream release` workflow runs every 6 hours. It merges the latest release tag of
+`remnawave/backend` (for example `3.4.8`, the code of the official image) into `custom`,
+type-checks the result, pushes it and starts the image build. If the merge conflicts or the check
+fails, nothing is pushed to `custom`: the run fails (GitHub emails you), its summary lists the
+problem and a `sync/<tag>` branch is left for the manual merge described below.
 
-- `src/modules/subscription-template/resolve-proxy/resolve-proxy-config.service.ts`
-- `src/modules/subscription-template/render-templates.service.ts`
-- `src/modules/subscription-template/subscription-template.module.ts`
-- `src/modules/subscription/subscription.service.ts`
+To merge a specific tag, or to retry right away: Actions → Sync upstream release → Run workflow.
+
+### One-time setup
+
+1. Settings → General → Default branch: select `custom`. Scheduled workflows only run from the
+   default branch. Do not use the "Sync fork" button afterwards: it merges upstream `main`, which
+   may contain unreleased code.
+2. Actions: disable the upstream workflows (`Build&Push Release Docker Image`, `Build&Push Dev
+   Docker Image`, `Deploy backend contracts`, `Push OpenAPI specs`, `Release to panel`). They
+   publish to Remnawave's own registries and fail in a fork; `Deploy backend contracts` would run
+   on every release that changes `libs/contract/package.json`.
+3. Optional: add a `SYNC_TOKEN` repository secret (Settings → Secrets and variables → Actions)
+   with a fine-grained personal access token for this repository with the **Contents** and
+   **Workflows** read and write permissions. GitHub does not let the built-in token push commits
+   that change `.github/workflows`, so without it a release that edits workflow files (rare) ends
+   as a failed sync that has to be merged manually.
+
+### Our changes to upstream files
+
+The feature lives in `src/modules/injected-hosts/`, which upstream never touches. Upstream files
+only carry these hooks; this is what has to survive every merge:
+
+`src/modules/subscription-template/resolve-proxy/resolve-proxy-config.service.ts`
+
+```ts
+import { InjectedHostsService } from '@modules/injected-hosts/injected-hosts.service';
+
+export interface IResolveProxyConfigOptions {
+    // ...upstream fields...
+    // Append hosts from the injected hosts file; 'NOT_HIDDEN' where hidden hosts are not served.
+    injectedHosts?: 'ALL' | 'NOT_HIDDEN';
+}
+
+constructor(
+    private readonly configService: TypedConfigService,
+    private readonly injectedHostsService: InjectedHostsService,
+) {
+
+// in resolveProxyConfig(), right before resolveEarlyExitRemarks():
+const injectedHosts = await this.getInjectedHosts(options);
+// ...and its host count argument becomes:
+options.hosts.length + injectedHosts.length,
+
+// at the end of resolveProxyConfig(), before `return resolvedProxyConfigs;`:
+for (const injectedHost of injectedHosts) {
+    resolvedProxyConfigs.push({
+        ...injectedHost,
+        finalRemark: this.deduplicateRemark(injectedHost.finalRemark, knownRemarks),
+    });
+}
+
+// plus the private getInjectedHosts(options) method
+```
+
+`src/modules/subscription-template/render-templates.service.ts`: in `generateSubscription()`
+
+```ts
+injectedHosts:
+    srrContext.matchedResponseType === 'XRAY_JSON' ||
+    srrContext.matchedResponseType === 'MIHOMO'
+        ? 'ALL'
+        : 'NOT_HIDDEN',
+```
+
+and `injectedHosts: 'ALL'` in `generateRawSubscription()`.
+
+`src/modules/subscription-template/subscription-template.module.ts`: `InjectedHostsService` in
+`providers` (and its import).
+
+`src/modules/subscription/subscription.service.ts`: `injectedHosts: 'NOT_HIDDEN'` in the
+`resolveProxyConfig()` call of `getSubscriptionInfo()`.
+
+`git diff <upstream tag> custom -- src/modules/subscription-template src/modules/subscription`
+shows the current hooks at any time.
+
+### Resolving a failed sync
+
+One-time local setup:
+
+```sh
+git clone https://github.com/TripleA150/backend.git && cd backend
+git remote add upstream https://github.com/remnawave/backend.git
+git config user.name "TripleA150"
+git config user.email "46062533+TripleA150@users.noreply.github.com"
+```
+
+Merge the release named in the failed run:
+
+```sh
+git switch custom && git pull
+git fetch upstream --tags
+git merge 3.4.8
+```
+
+**If git reports conflicts**, `git status` lists the files. In each conflict block, the part between
+`<<<<<<< HEAD` and `=======` is ours, the part up to `>>>>>>> 3.4.8` is upstream's. Keep upstream's
+code and re-add our hook lines from the section above, so upstream changes are never lost. Remove
+the markers, then:
+
+```sh
+git add <file>        # for every resolved file
+git commit --no-edit
+```
+
+To start over at any point: `git merge --abort`.
+
+Conflicts outside the four files above are not caused by this fork: take upstream's version with
+`git checkout --theirs <file> && git add <file>`.
+
+**If the merge was clean but the type check failed**, upstream changed something our code uses.
+Typical cases:
+
+- the `ResolvedProxyConfig` type gained or renamed fields: update `build()` and the transport or
+  security helpers in `src/modules/injected-hosts/share-link.parser.ts`;
+- `IResolveProxyConfigOptions`, `resolveEarlyExitRemarks()` or `deduplicateRemark()` changed:
+  re-apply the hook in `resolve-proxy-config.service.ts` to the new code;
+- the `internalSquads` or `internalSquadMembers` tables were renamed: update the two queries in
+  `injected-hosts.service.ts`.
+
+**Check before pushing** (the same check the workflow runs, plus lint and build):
+
+```sh
+npm ci
+npm run migrate:generate
+npx tsc --noEmit
+npm run check
+npm run build
+git push origin custom
+```
+
+The push builds the image. The next scheduled sync sees that `custom` contains the release and
+does nothing. Delete the `sync/<tag>` branch on GitHub. After deploying, open one subscription of
+a squad with injected keys and check that they are present.

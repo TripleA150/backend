@@ -1,0 +1,111 @@
+name: Sync upstream release
+
+# Merges the latest remnawave/backend release tag into `custom`, type-checks the result and
+# builds the image. On a conflict or a failed check nothing is pushed to `custom`; the run fails
+# and leaves a `sync/<tag>` branch for manual resolution (see INJECTED_HOSTS.md).
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Upstream tag to merge (empty = latest release)'
+        required: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: custom
+          fetch-depth: 0
+          # A token with the Workflows permission is needed when a release changes workflow files.
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Find upstream release
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          git remote add upstream https://github.com/remnawave/backend.git
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then
+            tag=$(git ls-remote --tags --refs upstream | sed 's|.*refs/tags/||' \
+              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          fi
+          git fetch --no-tags upstream "+refs/tags/$tag:refs/tags/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$tag" HEAD; then
+            echo "\`custom\` already contains upstream $tag." >> "$GITHUB_STEP_SUMMARY"
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge
+        id: merge
+        if: steps.release.outputs.up_to_date != 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git config user.name "${{ github.repository_owner }}"
+          git config user.email "${{ github.repository_owner_id }}+${{ github.repository_owner }}@users.noreply.github.com"
+          if git merge --no-edit -m "chore: merge upstream $TAG" "$TAG"; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Conflicting files:" >> "$GITHUB_STEP_SUMMARY"
+            git diff --name-only --diff-filter=U | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+            git merge --abort
+          fi
+
+      - name: Setup Node
+        if: steps.merge.outputs.clean == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+
+      - name: Type-check merged code
+        id: check
+        if: steps.merge.outputs.clean == 'true'
+        run: |
+          npm ci --no-audit --no-fund
+          npm run migrate:generate
+          npx tsc --noEmit
+
+      - name: Push and build
+        if: steps.merge.outputs.clean == 'true' && steps.check.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git push origin HEAD:custom
+          # Pushes made with the built-in token do not trigger other workflows.
+          if [ "$HAS_SYNC_TOKEN" != "true" ]; then
+            gh workflow run build-custom.yml --ref custom
+          fi
+          echo "Merged upstream $TAG into \`custom\`; image build started." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Leave branch for manual merge
+        if: failure() || (steps.merge.outcome == 'success' && steps.merge.outputs.clean != 'true')
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          [ -n "$TAG" ] || exit 1
+          # After a failed check or push the merge commit is kept; after a conflict, the upstream tag.
+          if [ "${{ steps.merge.outputs.clean }}" = "true" ]; then source=HEAD; else source="$TAG^{commit}"; fi
+          git push --force origin "$source:refs/heads/sync/$TAG" || true
+          {
+            echo "### Upstream $TAG needs a manual merge"
+            echo "Nothing was pushed to \`custom\`. Follow \"Resolving a failed sync\" in INJECTED_HOSTS.md."
+            echo "If the push was refused because the release changes workflow files, add the SYNC_TOKEN secret."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
