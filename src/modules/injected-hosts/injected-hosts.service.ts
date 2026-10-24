@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { Injectable, Logger } from '@nestjs/common';
 
 import { TxKyselyService } from '@common/database';
+import { SUBSCRIPTION_TEMPLATE_TYPE } from '@libs/contracts/constants';
 
 import { ResolvedProxyConfig } from '@modules/subscription-template/resolve-proxy/interfaces';
 
@@ -20,6 +21,7 @@ const OptionsSchema = z.object({
     hidden: z.boolean().optional(),
     // Name template: {remark} is the link's own name, {n} its position in the source.
     remark: z.string().optional(),
+    excludeFromSubscriptionTypes: z.array(z.enum(SUBSCRIPTION_TEMPLATE_TYPE)).optional(),
 });
 
 const SourceSchema = OptionsSchema.extend({
@@ -112,14 +114,9 @@ export class InjectedHostsService {
             const next = new Map<string, ResolvedProxyConfig[]>();
 
             for (const [index, source] of parsed.data.entries()) {
-                const entries: {
-                    link: string;
-                    tags?: string[];
-                    hidden?: boolean;
-                    remark?: string;
-                }[] = (source.keys ?? []).map((key) =>
-                    typeof key === 'string' ? { link: key } : key,
-                );
+                const entries: (z.infer<typeof OptionsSchema> & { link: string })[] = (
+                    source.keys ?? []
+                ).map((key) => (typeof key === 'string' ? { link: key } : key));
 
                 if (source.url) {
                     const links = await this.fetchLinks(source.url);
@@ -133,6 +130,10 @@ export class InjectedHostsService {
 
                     host.metadata.tags = entry.tags ?? source.tags ?? [];
                     host.metadata.isHidden = entry.hidden ?? source.hidden ?? false;
+                    host.metadata.excludeFromSubscriptionTypes =
+                        entry.excludeFromSubscriptionTypes ??
+                        source.excludeFromSubscriptionTypes ??
+                        [];
 
                     const remark = entry.remark ?? source.remark;
                     if (remark) {
