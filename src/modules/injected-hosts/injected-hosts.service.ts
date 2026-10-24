@@ -30,6 +30,18 @@ const SourceSchema = OptionsSchema.extend({
 
 const FileSchema = z.array(SourceSchema);
 
+// Shadowsocks and VLESS Encryption protect traffic themselves; otherwise TLS or REALITY is required.
+function isEncrypted(host: ResolvedProxyConfig): boolean {
+    switch (host.protocol) {
+        case 'shadowsocks':
+            return !['none', 'plain'].includes(host.protocolOptions.method.toLowerCase());
+        case 'vless':
+            return host.security !== 'none' || host.protocolOptions.encryption !== 'none';
+        default:
+            return host.security !== 'none';
+    }
+}
+
 /**
  * Serves extra hosts (external share links) to members of internal squads, configured in
  * INJECTED_HOSTS_FILE. The file and its URLs are reloaded in the background every
@@ -117,7 +129,7 @@ export class InjectedHostsService {
                 const hosts: ResolvedProxyConfig[] = [];
                 for (const entry of entries) {
                     const host = parseShareLink(entry.link);
-                    if (!host) continue;
+                    if (!host || !isEncrypted(host)) continue;
 
                     host.metadata.tags = entry.tags ?? source.tags ?? [];
                     host.metadata.isHidden = entry.hidden ?? source.hidden ?? false;
@@ -137,7 +149,7 @@ export class InjectedHostsService {
 
                 if (hosts.length < entries.length) {
                     this.logger.warn(
-                        `Source #${index + 1}: skipped ${entries.length - hosts.length} of ${entries.length} unsupported or invalid links`,
+                        `Source #${index + 1}: skipped ${entries.length - hosts.length} of ${entries.length} unsupported, invalid or unencrypted links`,
                     );
                 }
 
