@@ -22,6 +22,8 @@ const OptionsSchema = z.object({
     // Name template: {remark} is the link's own name, {n} its position in the source.
     remark: z.string().optional(),
     excludeFromSubscriptionTypes: z.array(z.enum(SUBSCRIPTION_TEMPLATE_TYPE)).optional(),
+    // Name or UUID of an XRAY_JSON subscription template, like a host's Xray JSON template.
+    xrayJsonTemplate: z.string().optional(),
 });
 
 const SourceSchema = OptionsSchema.extend({
@@ -111,6 +113,12 @@ export class InjectedHostsService {
                 .select(['uuid', 'name'])
                 .execute();
 
+            const templates = await this.qb.kysely
+                .selectFrom('subscriptionTemplates')
+                .select(['uuid', 'name', 'templateJson'])
+                .where('templateType', '=', 'XRAY_JSON')
+                .execute();
+
             const next = new Map<string, ResolvedProxyConfig[]>();
 
             for (const [index, source] of parsed.data.entries()) {
@@ -123,6 +131,18 @@ export class InjectedHostsService {
                     entries.push(...links.map((link) => ({ link })));
                 }
 
+                const findTemplate = (ref: string | undefined): object | null => {
+                    if (!ref) return null;
+                    const template = templates.find((t) => t.uuid === ref || t.name === ref);
+                    if (!template) {
+                        this.logger.warn(
+                            `Source #${index + 1}: XRAY_JSON template "${ref}" not found`,
+                        );
+                    }
+                    return (template?.templateJson as object | null | undefined) ?? null;
+                };
+                const sourceTemplate = findTemplate(source.xrayJsonTemplate);
+
                 const hosts: ResolvedProxyConfig[] = [];
                 for (const entry of entries) {
                     const host = parseShareLink(entry.link);
@@ -134,6 +154,9 @@ export class InjectedHostsService {
                         entry.excludeFromSubscriptionTypes ??
                         source.excludeFromSubscriptionTypes ??
                         [];
+                    host.clientOverrides.xrayJsonTemplate = entry.xrayJsonTemplate
+                        ? findTemplate(entry.xrayJsonTemplate)
+                        : sourceTemplate;
 
                     const remark = entry.remark ?? source.remark;
                     if (remark) {
