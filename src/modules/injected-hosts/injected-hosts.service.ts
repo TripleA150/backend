@@ -33,6 +33,8 @@ const SourceSchema = OptionsSchema.extend({
     ignoreBalancers: z.boolean().optional(),
     // User-Agent for requests to url; Node's default is "node".
     userAgent: z.string().optional(),
+    // How often url is downloaded; the file itself is re-read every REFRESH_INTERVAL_MS.
+    refreshMinutes: z.number().int().min(1).optional(),
     keys: z.array(z.union([z.string(), OptionsSchema.extend({ link: z.string() })])).optional(),
 });
 
@@ -60,7 +62,8 @@ export class InjectedHostsService {
     private readonly logger = new Logger(InjectedHostsService.name);
 
     private hostsBySquad = new Map<string, ResolvedProxyConfig[]>();
-    private readonly lastGoodUrlLinks = new Map<string, string[]>();
+    // Last successful download of each URL.
+    private readonly urlCache = new Map<string, { links: string[]; fetchedAt: number }>();
     private loadedAt = 0;
     private loading: Promise<void> | null = null;
 
@@ -199,9 +202,19 @@ export class InjectedHostsService {
 
     private async fetchLinks(
         url: string,
-        { ignoreBalancers, userAgent }: { ignoreBalancers?: boolean; userAgent?: string },
+        {
+            ignoreBalancers,
+            userAgent,
+            refreshMinutes,
+        }: { ignoreBalancers?: boolean; userAgent?: string; refreshMinutes?: number },
     ): Promise<string[]> {
         const cacheKey = `${!!ignoreBalancers}:${userAgent ?? ''}:${url}`;
+        const cached = this.urlCache.get(cacheKey);
+        const startedAt = Date.now();
+        if (cached && startedAt - cached.fetchedAt < (refreshMinutes ?? 0) * 60_000) {
+            return cached.links;
+        }
+
         try {
             let body = await this.fetchText(url, userAgent);
 
@@ -221,11 +234,12 @@ export class InjectedHostsService {
                 );
             }
 
-            this.lastGoodUrlLinks.set(cacheKey, links);
+            this.urlCache.set(cacheKey, { links, fetchedAt: startedAt });
             return links;
         } catch (error) {
+            // fetchedAt stays old, so the next reload retries.
             this.logger.error(`Failed to fetch ${url}, using last good copy: ${error}`);
-            return this.lastGoodUrlLinks.get(cacheKey) ?? [];
+            return cached?.links ?? [];
         }
     }
 
