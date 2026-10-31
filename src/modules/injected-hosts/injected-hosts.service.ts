@@ -31,6 +31,8 @@ const SourceSchema = OptionsSchema.extend({
     url: z.string().url().optional(),
     // For Remnawave subscriptions: drop the links of balancer profiles.
     ignoreBalancers: z.boolean().optional(),
+    // User-Agent for requests to url; Node's default is "node".
+    userAgent: z.string().optional(),
     keys: z.array(z.union([z.string(), OptionsSchema.extend({ link: z.string() })])).optional(),
 });
 
@@ -129,7 +131,7 @@ export class InjectedHostsService {
                 ).map((key) => (typeof key === 'string' ? { link: key } : key));
 
                 if (source.url) {
-                    const links = await this.fetchLinks(source.url, !!source.ignoreBalancers);
+                    const links = await this.fetchLinks(source.url, source);
                     entries.push(...links.map((link) => ({ link })));
                 }
 
@@ -195,10 +197,13 @@ export class InjectedHostsService {
         }
     }
 
-    private async fetchLinks(url: string, ignoreBalancers: boolean): Promise<string[]> {
-        const cacheKey = `${ignoreBalancers}:${url}`;
+    private async fetchLinks(
+        url: string,
+        { ignoreBalancers, userAgent }: { ignoreBalancers?: boolean; userAgent?: string },
+    ): Promise<string[]> {
+        const cacheKey = `${!!ignoreBalancers}:${userAgent ?? ''}:${url}`;
         try {
-            let body = await this.fetchText(url);
+            let body = await this.fetchText(url, userAgent);
 
             // Subscriptions are served either as plain links or as one base64 blob.
             if (!body.includes('://')) body = Buffer.from(body.trim(), 'base64').toString('utf8');
@@ -210,7 +215,7 @@ export class InjectedHostsService {
             if (links.length === 0) throw new Error('no share links in the response');
 
             if (ignoreBalancers) {
-                const balancers = await this.fetchBalancerRemarks(url);
+                const balancers = await this.fetchBalancerRemarks(url, userAgent);
                 links = links.filter(
                     (link) => !balancers.has(safeDecode(link.split('#')[1] ?? '')),
                 );
@@ -226,11 +231,11 @@ export class InjectedHostsService {
 
     // A Remnawave panel serves every profile as XRAY_JSON at <subscription>/json; balancer
     // profiles are the ones with routing.balancers, and share the remark of their base64 link.
-    private async fetchBalancerRemarks(url: string): Promise<Set<string>> {
+    private async fetchBalancerRemarks(url: string, userAgent?: string): Promise<Set<string>> {
         const jsonUrl = new URL(url);
         jsonUrl.pathname = `${jsonUrl.pathname.replace(/\/$/, '')}/json`;
 
-        const profiles: unknown = JSON.parse(await this.fetchText(jsonUrl.toString()));
+        const profiles: unknown = JSON.parse(await this.fetchText(jsonUrl.toString(), userAgent));
         if (!Array.isArray(profiles))
             throw new Error(`${jsonUrl.pathname} is not an XRAY_JSON list`);
 
@@ -241,8 +246,11 @@ export class InjectedHostsService {
         );
     }
 
-    private async fetchText(url: string): Promise<string> {
-        const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    private async fetchText(url: string, userAgent?: string): Promise<string> {
+        const response = await fetch(url, {
+            headers: userAgent ? { 'user-agent': userAgent } : undefined,
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const body = await response.text();
