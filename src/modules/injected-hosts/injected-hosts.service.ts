@@ -8,13 +8,13 @@ import { SUBSCRIPTION_TEMPLATE_TYPE } from '@libs/contracts/constants';
 
 import { ResolvedProxyConfig } from '@modules/subscription-template/resolve-proxy/interfaces';
 
-import { parseShareLink } from './share-link.parser';
+import { parseShareLink, safeDecode } from './share-link.parser';
 
 export const INJECTED_HOSTS_FILE = '/var/lib/remnawave/injected-hosts.json';
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
-const MAX_BODY_LENGTH = 2 * 1024 * 1024;
+const MAX_BODY_LENGTH = 10 * 1024 * 1024;
 
 const OptionsSchema = z.object({
     tags: z.array(z.string()).optional(),
@@ -29,6 +29,8 @@ const OptionsSchema = z.object({
 const SourceSchema = OptionsSchema.extend({
     squads: z.array(z.string()).min(1),
     url: z.string().url().optional(),
+    // For Remnawave subscriptions: drop the links of balancer profiles.
+    ignoreBalancers: z.boolean().optional(),
     keys: z.array(z.union([z.string(), OptionsSchema.extend({ link: z.string() })])).optional(),
 });
 
@@ -127,7 +129,7 @@ export class InjectedHostsService {
                 ).map((key) => (typeof key === 'string' ? { link: key } : key));
 
                 if (source.url) {
-                    const links = await this.fetchLinks(source.url);
+                    const links = await this.fetchLinks(source.url, !!source.ignoreBalancers);
                     entries.push(...links.map((link) => ({ link })));
                 }
 
@@ -193,27 +195,58 @@ export class InjectedHostsService {
         }
     }
 
-    private async fetchLinks(url: string): Promise<string[]> {
+    private async fetchLinks(url: string, ignoreBalancers: boolean): Promise<string[]> {
+        const cacheKey = `${ignoreBalancers}:${url}`;
         try {
-            const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-            let body = await response.text();
-            if (body.length > MAX_BODY_LENGTH) throw new Error('response is too large');
+            let body = await this.fetchText(url);
 
             // Subscriptions are served either as plain links or as one base64 blob.
             if (!body.includes('://')) body = Buffer.from(body.trim(), 'base64').toString('utf8');
 
-            const links = body
+            let links = body
                 .split(/\r?\n/)
                 .map((line) => line.trim())
-                .filter((line) => line.includes('://'));
+                .filter((line) => /^[a-z0-9]+:\/\//i.test(line));
+            if (links.length === 0) throw new Error('no share links in the response');
 
-            this.lastGoodUrlLinks.set(url, links);
+            if (ignoreBalancers) {
+                const balancers = await this.fetchBalancerRemarks(url);
+                links = links.filter(
+                    (link) => !balancers.has(safeDecode(link.split('#')[1] ?? '')),
+                );
+            }
+
+            this.lastGoodUrlLinks.set(cacheKey, links);
             return links;
         } catch (error) {
             this.logger.error(`Failed to fetch ${url}, using last good copy: ${error}`);
-            return this.lastGoodUrlLinks.get(url) ?? [];
+            return this.lastGoodUrlLinks.get(cacheKey) ?? [];
         }
+    }
+
+    // A Remnawave panel serves every profile as XRAY_JSON at <subscription>/json; balancer
+    // profiles are the ones with routing.balancers, and share the remark of their base64 link.
+    private async fetchBalancerRemarks(url: string): Promise<Set<string>> {
+        const jsonUrl = new URL(url);
+        jsonUrl.pathname = `${jsonUrl.pathname.replace(/\/$/, '')}/json`;
+
+        const profiles: unknown = JSON.parse(await this.fetchText(jsonUrl.toString()));
+        if (!Array.isArray(profiles))
+            throw new Error(`${jsonUrl.pathname} is not an XRAY_JSON list`);
+
+        return new Set(
+            (profiles as { remarks?: unknown; routing?: { balancers?: unknown[] } }[])
+                .filter((profile) => profile?.routing?.balancers?.length)
+                .map((profile) => String(profile.remarks)),
+        );
+    }
+
+    private async fetchText(url: string): Promise<string> {
+        const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const body = await response.text();
+        if (body.length > MAX_BODY_LENGTH) throw new Error('response is too large');
+        return body;
     }
 }

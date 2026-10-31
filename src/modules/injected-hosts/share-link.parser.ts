@@ -340,7 +340,7 @@ function decodeBase64(value: string): string {
     return Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
 }
 
-function safeDecode(value: string): string {
+export function safeDecode(value: string): string {
     try {
         return decodeURIComponent(value);
     } catch {
