@@ -37,6 +37,7 @@ export class RenderTemplatesService {
             hostsOverrides,
             fallbackOptions,
             excludeHostsByTags: srrContext.excludeHostsByTags,
+            matchedRuleName: srrContext.matchedRuleName,
             // Same rule as the hidden-hosts flag of GetHostsForUserQuery in SubscriptionService.
             injectedHosts:
                 srrContext.matchedResponseType === 'XRAY_JSON' ||
@@ -123,6 +124,7 @@ export class RenderTemplatesService {
             user,
             hostsOverrides,
             fallbackOptions,
+            matchedRuleName: 'RAW',
             injectedHosts: 'ALL',
         });
     }
