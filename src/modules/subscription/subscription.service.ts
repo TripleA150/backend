@@ -520,6 +520,7 @@ export class SubscriptionService {
                     hosts: hostsResponse.isOk ? hostsResponse.response : [],
                     user: userEntity,
                     hostsOverrides,
+                    injectedHosts: 'NOT_HIDDEN',
                 });
 
                 xrayLinks = this.xrayGeneratorService.generateLinks(formattedHosts, false);
