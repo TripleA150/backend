@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { CqrsModule } from '@nestjs/cqrs';
 
+import { InjectedHostsService } from '@modules/injected-hosts/injected-hosts.service';
+
 import { TEMPLATE_RENDERERS } from './generators';
 import { QUERIES } from './queries';
 import { RenderTemplatesService } from './render-templates.service';
@@ -17,6 +19,7 @@ import { SubscriptionTemplateService } from './subscription-template.service';
         SubscriptionTemplateRepository,
         SubscriptionTemplateConverter,
         ResolveProxyConfigService,
+        InjectedHostsService,
         ...TEMPLATE_RENDERERS,
         RenderTemplatesService,
         ...QUERIES,
