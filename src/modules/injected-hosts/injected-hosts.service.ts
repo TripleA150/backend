@@ -62,8 +62,11 @@ export class InjectedHostsService {
     private readonly logger = new Logger(InjectedHostsService.name);
 
     private hostsBySquad = new Map<string, ResolvedProxyConfig[]>();
-    // Last successful download of each URL.
-    private readonly urlCache = new Map<string, { links: string[]; fetchedAt: number }>();
+    // Last successful download of each URL and when the next attempt is due.
+    private readonly urlCache = new Map<
+        string,
+        { links: string[]; nextAttemptAt: number; failures: number }
+    >();
     private loadedAt = 0;
     private loading: Promise<void> | null = null;
 
@@ -211,9 +214,9 @@ export class InjectedHostsService {
         const cacheKey = `${!!ignoreBalancers}:${userAgent ?? ''}:${url}`;
         const cached = this.urlCache.get(cacheKey);
         const startedAt = Date.now();
-        if (cached && startedAt - cached.fetchedAt < (refreshMinutes ?? 0) * 60_000) {
-            return cached.links;
-        }
+        if (cached && startedAt < cached.nextAttemptAt) return cached.links;
+
+        const refreshMs = Math.max(refreshMinutes ?? 0, 5) * 60_000;
 
         try {
             let body = await this.fetchText(url, userAgent);
@@ -234,12 +237,23 @@ export class InjectedHostsService {
                 );
             }
 
-            this.urlCache.set(cacheKey, { links, fetchedAt: startedAt });
+            this.urlCache.set(cacheKey, {
+                links,
+                nextAttemptAt: startedAt + refreshMs,
+                failures: 0,
+            });
             return links;
         } catch (error) {
-            // fetchedAt stays old, so the next reload retries.
-            this.logger.error(`Failed to fetch ${url}, using last good copy: ${error}`);
-            return cached?.links ?? [];
+            // Back off 5, 10, 20... minutes, at most the refresh interval, so a failing or banning
+            // source is not hammered every reload.
+            const failures = (cached?.failures ?? 0) + 1;
+            const delayMs = Math.min(5 * 60_000 * 2 ** (failures - 1), refreshMs);
+            const links = cached?.links ?? [];
+            this.urlCache.set(cacheKey, { links, nextAttemptAt: startedAt + delayMs, failures });
+            this.logger.error(
+                `Failed to fetch ${url}, using last good copy, next attempt in ${delayMs / 60_000} min: ${error}`,
+            );
+            return links;
         }
     }
 
