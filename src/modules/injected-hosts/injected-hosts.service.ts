@@ -1,4 +1,6 @@
+import axios from 'axios';
 import { readFile } from 'node:fs/promises';
+import { ProxyAgent } from 'proxy-agent';
 import { z } from 'zod';
 
 import { Injectable, Logger } from '@nestjs/common';
@@ -35,6 +37,11 @@ const SourceSchema = OptionsSchema.extend({
     userAgent: z.string().optional(),
     // How often url is downloaded; the file itself is re-read every REFRESH_INTERVAL_MS.
     refreshMinutes: z.number().int().min(1).optional(),
+    // Proxy for requests to url: http(s)://, socks4:// or socks5://, optionally with user:pass@.
+    proxy: z
+        .string()
+        .regex(/^(https?|socks(4a?|5h?)?):\/\/\S+$/, 'expected http(s):// or socks4/5:// proxy URL')
+        .optional(),
     keys: z.array(z.union([z.string(), OptionsSchema.extend({ link: z.string() })])).optional(),
 });
 
@@ -209,9 +216,16 @@ export class InjectedHostsService {
             ignoreBalancers,
             userAgent,
             refreshMinutes,
-        }: { ignoreBalancers?: boolean; userAgent?: string; refreshMinutes?: number },
+            proxy,
+        }: {
+            ignoreBalancers?: boolean;
+            userAgent?: string;
+            refreshMinutes?: number;
+            proxy?: string;
+        },
     ): Promise<string[]> {
-        const cacheKey = `${!!ignoreBalancers}:${userAgent ?? ''}:${url}`;
+        // A changed proxy gets a fresh entry, so it is tried at once instead of after a backoff.
+        const cacheKey = `${!!ignoreBalancers}:${userAgent ?? ''}:${proxy ?? ''}:${url}`;
         const cached = this.urlCache.get(cacheKey);
         const startedAt = Date.now();
         if (cached && startedAt < cached.nextAttemptAt) return cached.links;
@@ -219,7 +233,7 @@ export class InjectedHostsService {
         const refreshMs = Math.max(refreshMinutes ?? 0, 5) * 60_000;
 
         try {
-            let body = await this.fetchText(url, userAgent);
+            let body = await this.fetchText(url, userAgent, proxy);
 
             // Subscriptions are served either as plain links or as one base64 blob.
             if (!body.includes('://')) body = Buffer.from(body.trim(), 'base64').toString('utf8');
@@ -231,7 +245,7 @@ export class InjectedHostsService {
             if (links.length === 0) throw new Error('no share links in the response');
 
             if (ignoreBalancers) {
-                const balancers = await this.fetchBalancerRemarks(url, userAgent);
+                const balancers = await this.fetchBalancerRemarks(url, userAgent, proxy);
                 links = links.filter(
                     (link) => !balancers.has(safeDecode(link.split('#')[1] ?? '')),
                 );
@@ -259,11 +273,17 @@ export class InjectedHostsService {
 
     // A Remnawave panel serves every profile as XRAY_JSON at <subscription>/json; balancer
     // profiles are the ones with routing.balancers, and share the remark of their base64 link.
-    private async fetchBalancerRemarks(url: string, userAgent?: string): Promise<Set<string>> {
+    private async fetchBalancerRemarks(
+        url: string,
+        userAgent?: string,
+        proxy?: string,
+    ): Promise<Set<string>> {
         const jsonUrl = new URL(url);
         jsonUrl.pathname = `${jsonUrl.pathname.replace(/\/$/, '')}/json`;
 
-        const profiles: unknown = JSON.parse(await this.fetchText(jsonUrl.toString(), userAgent));
+        const profiles: unknown = JSON.parse(
+            await this.fetchText(jsonUrl.toString(), userAgent, proxy),
+        );
         if (!Array.isArray(profiles))
             throw new Error(`${jsonUrl.pathname} is not an XRAY_JSON list`);
 
@@ -274,7 +294,24 @@ export class InjectedHostsService {
         );
     }
 
-    private async fetchText(url: string, userAgent?: string): Promise<string> {
+    private async fetchText(url: string, userAgent?: string, proxy?: string): Promise<string> {
+        if (proxy) {
+            // Same proxy handling as the Telegram bot (TELEGRAM_BOT_PROXY).
+            const agent = new ProxyAgent({ getProxyForUrl: () => proxy });
+            const response = await axios.get<string>(url, {
+                // Keep fetch's default User-Agent, providers pick the response format by it.
+                headers: { 'user-agent': userAgent ?? 'node' },
+                httpAgent: agent,
+                httpsAgent: agent,
+                proxy: false,
+                responseType: 'text',
+                transformResponse: (data: string) => data,
+                timeout: FETCH_TIMEOUT_MS,
+                maxContentLength: MAX_BODY_LENGTH,
+            });
+            return response.data;
+        }
+
         const response = await fetch(url, {
             headers: userAgent ? { 'user-agent': userAgent } : undefined,
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
